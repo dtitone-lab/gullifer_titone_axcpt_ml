@@ -60,7 +60,7 @@ axcpt_ppd <- axcpt_preprocess(axcpt_ppd)
 ```
 
 
-# Analysis 2: AXCPT lasso regression
+# Analysis 2: AXCPT lasso regression approach
 ```{r}
 axcpt_ppd.sd <- axcpt_ppd %>% 
   group_by(participant, Condition, aoa, L2_exposure, PCA_General, 
@@ -307,7 +307,7 @@ axcpt.acc_fit
 ```
 
 
-# Analysis 3: LHQ lasso regression
+# Analysis 3: L2 outcomes lasso regression approach
 
 ## Leave-one-out cross-validation
 ### L2 accentedness

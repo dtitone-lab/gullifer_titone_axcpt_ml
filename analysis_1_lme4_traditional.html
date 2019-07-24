@@ -387,7 +387,7 @@ $(document).ready(function () {
 <li><a href="#loading-exec-control-data">Loading exec control data</a></li>
 <li><a href="#entropy-pca-and-scaling-of-variables">Entropy PCA and scaling of variables</a></li>
 <li><a href="#join-lhq-and-axcpt">Join LHQ and AXCPT</a></li>
-<li><a href="#analysis-1-axcpt-traditional-lme4-approach">Analysis 1: AXCPT traditional LME4 approach</a><ul>
+<li><a href="#analysis-1-axcpt-traditional-mixed-effects-approach">Analysis 1: AXCPT traditional mixed effects approach</a><ul>
 <li><a href="#reaction-time-data">Reaction time data</a></li>
 <li><a href="#accuracy-data">Accuracy data</a></li>
 </ul></li>
@@ -413,8 +413,8 @@ axcpt &lt;- as.data.table(fread(&quot;rawdata/axcpt_trial_data.csv&quot;, string
     &quot;&quot;))
 axcpt_ppd &lt;- axcpt_preprocess(axcpt_ppd)</code></pre>
 </div>
-<div id="analysis-1-axcpt-traditional-lme4-approach" class="section level1">
-<h1>Analysis 1: AXCPT traditional LME4 approach</h1>
+<div id="analysis-1-axcpt-traditional-mixed-effects-approach" class="section level1">
+<h1>Analysis 1: AXCPT traditional mixed effects approach</h1>
 <pre class="r"><code>mod.rt.0 &lt;- &quot;RT_correct  ~  Condition + (1|participant)&quot;
 
 mod.rt.1 &lt;- &quot;RT_correct  ~  Condition*aoa + Condition*L2_exposure + (1|participant)&quot;

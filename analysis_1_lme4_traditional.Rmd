@@ -47,7 +47,7 @@ axcpt_ppd <- left_join(axcpt, exec_lhq_ppd, by="participant",suffix=c(".x",""))
 axcpt_ppd <- axcpt_preprocess(axcpt_ppd)
 ```
 
-# Analysis 1: AXCPT traditional LME4 approach
+# Analysis 1: AXCPT traditional mixed effects approach
 ```{r}
 mod.rt.0  <- "RT_correct  ~  Condition + (1|participant)"
 
