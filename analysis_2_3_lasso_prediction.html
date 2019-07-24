@@ -388,7 +388,7 @@ $(document).ready(function () {
 <li><a href="#create-folds">Create folds</a></li>
 <li><a href="#entropy-pca-and-scaling-of-variables">Entropy PCA and scaling of variables</a></li>
 <li><a href="#join-lhq-and-axcpt">Join LHQ and AXCPT</a></li>
-<li><a href="#analysis-2-axcpt-lasso-regression-approach">Analysis 2: AXCPT lasso regression approach</a><ul>
+<li><a href="#analysis-2-axcpt-lasso-regression-approach">Analysis 2: AXCPT, lasso regression approach</a><ul>
 <li><a href="#leave-one-out-cross-validation">Leave-one-out cross-validation</a><ul>
 <li><a href="#reaction-time-data">Reaction time data</a></li>
 <li><a href="#accuracy-data">Accuracy Data</a></li>
@@ -398,7 +398,7 @@ $(document).ready(function () {
 <li><a href="#accuracy-data-1">Accuracy Data</a></li>
 </ul></li>
 </ul></li>
-<li><a href="#analysis-3-l2-outcomes-lasso-regression-approach">Analysis 3: L2 outcomes lasso regression approach</a><ul>
+<li><a href="#analysis-3-l2-outcomes-lasso-regression-approach">Analysis 3: L2 outcomes, lasso regression approach</a><ul>
 <li><a href="#leave-one-out-cross-validation-1">Leave-one-out cross-validation</a><ul>
 <li><a href="#l2-accentedness">L2 accentedness</a></li>
 <li><a href="#l2-ability">L2 ability</a></li>
@@ -442,7 +442,7 @@ exec_lhq &lt;- exec_lhq %&gt;% rename(.folds10 = .folds.x, .foldsloo = .folds.y)
 axcpt_ppd &lt;- axcpt_preprocess(axcpt_ppd)</code></pre>
 </div>
 <div id="analysis-2-axcpt-lasso-regression-approach" class="section level1">
-<h1>Analysis 2: AXCPT lasso regression approach</h1>
+<h1>Analysis 2: AXCPT, lasso regression approach</h1>
 <pre class="r"><code>axcpt_ppd.sd &lt;- axcpt_ppd %&gt;% group_by(participant, Condition, aoa, L2_exposure, 
     PCA_General, PCA_Work, .folds10, .foldsloo) %&gt;% summarise(meanRT = mean(RT_correct, 
     na.rm = T))
@@ -705,7 +705,7 @@ axcpt.acc_fit</code></pre>
 </div>
 </div>
 <div id="analysis-3-l2-outcomes-lasso-regression-approach" class="section level1">
-<h1>Analysis 3: L2 outcomes lasso regression approach</h1>
+<h1>Analysis 3: L2 outcomes, lasso regression approach</h1>
 <div id="leave-one-out-cross-validation-1" class="section level2">
 <h2>Leave-one-out cross-validation</h2>
 <div id="l2-accentedness" class="section level3">
