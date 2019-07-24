@@ -1,0 +1,179 @@
+---
+title: "Analysis 1: LME regression"
+author: "Jason W. Gullifer & Debra Titone"
+date: '2019-07-24'
+output:
+  html_document:
+    fig_height: 7
+    fig_width: 8
+    toc: yes
+  pdf_document:
+    toc: yes
+  word_document:
+    toc: yes
+---
+
+# Preliminaries
+```{r pre, echo=F, include=F}
+source("loadPackages.R")
+source("utilityFunctions.R")
+
+registerDoParallel(4)
+
+knitr::opts_chunk$set(cache = TRUE)
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(tidy = TRUE)
+knitr::opts_chunk$set(fig.path='figures/analysis_1_lme4_traditional/')
+knitr::opts_chunk$set(fig.show='hold')
+
+set.seed(420)
+```
+
+
+# Loading exec control data
+```{r}
+exec_lhq<- as.data.table(fread("subjectdata/axcpt_lhq_data_forpub.csv"))
+axcpt <- as.data.table(fread("rawdata/axcpt_trial_data.csv",stringsAsFactors = F, sep=","))
+```
+
+# Entropy PCA and scaling of variables
+```{r}
+exec_lhq_ppd <- preprocess_steps(exec_lhq)
+```
+
+# Join LHQ and AXCPT
+```{r results='hide', warning = FALSE}
+axcpt_ppd <- left_join(axcpt, exec_lhq_ppd, by="participant",suffix=c(".x",""))
+axcpt_ppd <- axcpt_preprocess(axcpt_ppd)
+```
+
+# Analysis 1: AXCPT traditional LME4 approach
+```{r}
+mod.rt.0  <- "RT_correct  ~  Condition + (1|participant)"
+
+mod.rt.1  <- "RT_correct  ~  Condition*aoa + Condition*L2_exposure + (1|participant)"
+
+mod.rt.1.1  <- "RT_correct  ~  Condition*PCA_Work + Condition*PCA_General + (1|participant)"
+
+mod.rt.1.1.1  <- "RT_correct  ~  Condition*PCA_General + (1|participant)"
+
+mod.rt.1.2  <- "RT_correct  ~  Condition*aoa + Condition*L2_exposure + Condition*PCA_General + (1|participant)"
+
+mod.rt.2  <- "RT_correct  ~  Condition*aoa + Condition*L2_exposure + Condition*PCA_Work + Condition*PCA_General + (1|participant)"
+
+mod.rt.3  <- "RT_correct  ~  aoa * (Condition*L2_exposure + Condition*PCA_Work + Condition*PCA_General) + (1|participant)"
+
+
+
+mod.acc.0  <- "acc        ~   Condition + (1|participant)"
+
+mod.acc.0.1  <- "acc        ~   Condition + L2_exposure*aoa + (1|participant)"
+
+mod.acc.1  <- "acc        ~   Condition*aoa + Condition*L2_exposure + (1|participant)"
+
+mod.acc.1.1  <- "acc        ~   Condition*PCA_Work + Condition*PCA_General + (1|participant)"
+
+mod.acc.2  <- "acc        ~   Condition*aoa + Condition*L2_exposure + Condition*PCA_Work + Condition*PCA_General + (1|participant)"
+
+mod.acc.3  <- "acc        ~   aoa * (Condition*L2_exposure + Condition*PCA_Work + Condition*PCA_General) + (1|participant)"
+
+mod.acc.4  <- "acc        ~  aoa*Condition*PCA_Work*PCA_General+ (1|participant)"
+```
+
+## Reaction time data
+```{r}
+all.rt.0    <- lmer(mod.rt.0, axcpt_ppd)
+all.rt.1    <- lmer(mod.rt.1, axcpt_ppd)
+all.rt.1.1.1  <- lmer(mod.rt.1.1, axcpt_ppd)
+all.rt.1.1  <- lmer(mod.rt.1.1, axcpt_ppd)
+all.rt.1.2  <- lmer(mod.rt.1.2, axcpt_ppd)
+all.rt.2    <- lmer(mod.rt.2, axcpt_ppd)
+all.rt.3    <- lmer(mod.rt.3, axcpt_ppd)
+```
+
+```{r}
+anova(all.rt.0, all.rt.1, all.rt.2, all.rt.3)
+AIC(all.rt.0, all.rt.1, all.rt.2, all.rt.3)
+BIC(all.rt.0, all.rt.1, all.rt.2, all.rt.3)
+```
+
+```{r}
+anova(all.rt.0, all.rt.1.1, all.rt.2)
+
+anova(all.rt.0, all.rt.1, all.rt.1.2, all.rt.2)
+anova(all.rt.0, all.rt.1.1.1, all.rt.1.2, all.rt.2)
+```
+
+So entropy explains more then L2 exp and aoa but not vice versa
+
+```{r}
+summ(all.rt.1.1, confint=T, digits=3)
+anova(all.rt.1.1)
+```
+
+```{r}
+ef<-	as.data.frame(Effect(c("PCA_Work","Condition"),all.rt.1.1, xlevels=list(PCA_Work=c(-2,-1,0,1,2)),
+													confidence.level = .686))
+
+f1a <- ggplot(ef, aes(x=PCA_Work, y=fit, ymin=lower,ymax=upper,group=Condition))	+  
+	geom_line(aes(colour=Condition), size=1) + geom_ribbon(fill="grey", alpha=.3) +
+	coord_cartesian(ylim=c(300,550)) +
+	ylab("Model-estimated\nreaction time (in ms)") + xlab("PC: Work Entropy") +
+		scale_colour_brewer(palette = "Set1") + theme_bw(base_size=12) + theme(panel.border = element_blank(), panel.grid.major = element_blank(),
+panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"))
+
+#ggsave("figures/axcpt_rt_work_condition.png", width=8.9, height=6, units = "cm")
+
+ef<-	as.data.frame(Effect(c("PCA_General","Condition"),all.rt.1.1, xlevels=list(PCA_General=c(-2,-1,0,1,2)),
+													confidence.level = .686))
+
+f1b <- ggplot(ef, aes(x=PCA_General, y=fit, ymin=lower,ymax=upper,group=Condition))	+  
+	geom_line(aes(colour=Condition), size=1) + geom_ribbon(fill="grey", alpha=.3) +
+	coord_cartesian(ylim=c(300,550)) +
+	ylab("Model-estimates\nreaction time (in ms)") + xlab("PC: General Entropy") +
+		scale_colour_brewer(palette = "Set1") + theme_bw(base_size = 12) + theme(panel.border = element_blank(), panel.grid.major = element_blank(),
+panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"))
+
+#ggsave("figures/axcpt_rt_general_condition.png", width=8.9, height=6, units = "cm")
+
+(f1 <- ggarrange(f1b,f1a, labels=c("A","B"), legend="bottom", common.legend = T))
+
+ggsave(plot = f1, "figures/traditional_rt_lme4_effects.png", width=17.8, height=8, units = "cm")
+```
+
+## Accuracy data
+```{r}
+all.acc.0    <- glmer(mod.acc.0,   axcpt_ppd,
+                   family="binomial", control=glmerControl(optimizer="bobyqa", optCtrl=list(maxfun=3e5)))
+
+all.acc.0.1    <- glmer(mod.acc.0.1,   axcpt_ppd,
+                   family="binomial", control=glmerControl(optimizer="bobyqa", optCtrl=list(maxfun=3e5)))
+
+all.acc.1    <- glmer(mod.acc.1,   axcpt_ppd,
+                   family="binomial", control=glmerControl(optimizer="bobyqa", optCtrl=list(maxfun=3e5)))
+
+all.acc.1.1  <- glmer(mod.acc.1.1, axcpt_ppd,
+                   family="binomial", control=glmerControl(optimizer="bobyqa", optCtrl=list(maxfun=3e5)))
+
+all.acc.2    <- glmer(mod.acc.2,  axcpt_ppd,
+                   family="binomial", control=glmerControl(optimizer="bobyqa", optCtrl=list(maxfun=3e5)))
+
+all.acc.3    <- glmer(mod.acc.3,  axcpt_ppd,
+                   family="binomial", control=glmerControl(optimizer="bobyqa", optCtrl=list(maxfun=3e5)))
+```
+
+
+```{r}
+anova(all.acc.0, all.acc.1, all.acc.2, all.acc.3)
+```
+
+```{r}
+anova(all.acc.0, all.acc.1.1, all.acc.2, all.acc.3)
+```
+
+
+```{r}
+summ(all.acc.0.1, confint=T, digits=3)
+summ(all.acc.0, confint=T, digits=3)
+anova(all.acc.0)
+```

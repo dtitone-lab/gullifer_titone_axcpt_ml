@@ -1,0 +1,8 @@
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+protected/
+*cache*/
+*~
+.DS_Store

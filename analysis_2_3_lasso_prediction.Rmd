@@ -1,0 +1,551 @@
+---
+title: "Analyses 2 and 3: Lasso regression"
+author: "Jason W. Gullifer & Debra Titone"
+date: '2019-07-24'
+output:
+  html_document:
+    fig_height: 7
+    fig_width: 8
+    toc: yes
+  pdf_document:
+    toc: yes
+  word_document:
+    toc: yes
+---
+
+# Preliminaries
+```{r pre, echo=F, include=F}
+source("loadPackages.R")
+source("utilityFunctions.R")
+
+registerDoParallel(4)
+
+knitr::opts_chunk$set(cache = TRUE)
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(tidy = TRUE)
+knitr::opts_chunk$set(fig.path='figures/analysis_2_3_lasso_prediction/')
+knitr::opts_chunk$set(fig.show='hold')
+
+set.seed(420)
+```
+
+# Loading data
+```{r}
+exec_lhq<- as.data.table(fread("subjectdata/axcpt_lhq_data_forpub.csv"))
+axcpt <- as.data.table(fread("rawdata/axcpt_trial_data.csv",stringsAsFactors = F, sep=","))
+```
+
+# Create folds
+```{r}
+k=10
+k_loo = length(unique(exec_lhq$participant))
+
+exec_lhq <- fold(exec_lhq, k = k, id_col = 'participant') %>% ungroup()
+
+exec_lhq <- fold(exec_lhq, k = k_loo, id_col = 'participant') %>% ungroup()
+
+exec_lhq <- exec_lhq %>% 
+  rename(.folds10 = .folds.x, .foldsloo = .folds.y)
+```
+
+# Entropy PCA and scaling of variables
+```{r}
+exec_lhq_ppd <- preprocess_steps(exec_lhq)
+```
+
+# Join LHQ and AXCPT
+```{r results='hide', warning = FALSE}
+axcpt_ppd <- left_join(axcpt, exec_lhq_ppd, by="participant",suffix=c(".x",""))
+axcpt_ppd <- axcpt_preprocess(axcpt_ppd)
+```
+
+
+# Analysis 2: AXCPT lasso regression
+```{r}
+axcpt_ppd.sd <- axcpt_ppd %>% 
+  group_by(participant, Condition, aoa, L2_exposure, PCA_General, 
+           PCA_Work, .folds10, .foldsloo) %>% 
+  summarise(meanRT = mean(RT_correct, na.rm=T))
+
+axcpt_ppd.acc.sd <- axcpt_ppd %>% 
+  group_by(participant, Condition, aoa, L2_exposure, PCA_General, 
+           PCA_Work, .folds10, .foldsloo) %>% 
+  summarise(N=n(), correct = sum(accuracy_target, na.rm=T), incorrect=N-correct)
+```
+
+
+## Leave-one-out cross-validation
+### Reaction time data
+```{r}
+mm_rt = model.matrix(meanRT  ~  aoa * (Condition*L2_exposure + Condition*PCA_Work + Condition*PCA_General),data=axcpt_ppd.sd)
+
+axcpt.rt.lasso = cv.glmnet(x=mm_rt,y=axcpt_ppd.sd$meanRT, type.measure = "mae", 
+                        parallel = T,
+                        foldid = as.numeric(axcpt_ppd.sd$.foldsloo), standardize=T)
+
+axcpt.rt.lasso.error <- data.frame(lambda=axcpt.rt.lasso$lambda, cvm=axcpt.rt.lasso$cvm,
+                                 cvlo=axcpt.rt.lasso$cvlo, cvup=axcpt.rt.lasso$cvup,
+                                 lambda.min=axcpt.rt.lasso$lambda.min, 
+                                 lambda.1se = axcpt.rt.lasso$lambda.1se, 
+                                 error_metric=axcpt.rt.lasso$name)
+
+p1 <- axcpt.rt.lasso.error %>% 
+  ggplot(aes(x=log(lambda), y=cvm, ymin=cvlo, ymax=cvup)) + 
+  geom_point(colour="red") + geom_errorbar() +  
+  geom_vline(aes(xintercept = log(lambda.1se)), linetype = 4) +
+  geom_vline(aes(xintercept = log(lambda.min)), linetype = 3) + 
+  theme_minimal(base_size = 12) + ylab(axcpt.rt.lasso$name) + 
+  xlab("Regularization parameter: log(\u03BB)") + coord_cartesian(xlim=c(4.5,-3))
+ggsave("figures/lasso_axcpt.rt_error_loo.png", width=17.8, height=11, units="cm")
+
+p2 <- axcpt.rt.lasso$glmnet.fit %>%
+  tidy() %>%
+  filter(term!="(Intercept)") %>% 
+  mutate(term = fct_reorder(term, str_length(term))) %>% 
+  ggplot(aes(log(lambda), estimate, color = term)) + 
+  geom_line(size=1.15) +
+  geom_hline(yintercept = 0, linetype = "solid") + 
+  geom_vline(xintercept = log(axcpt.rt.lasso$lambda.1se), linetype = 4) +
+  geom_vline(xintercept = log(axcpt.rt.lasso$lambda.min), linetype = 3) + 
+  theme_minimal(base_size = 12) + guides(colour=guide_legend("Effect", ncol = 1)) +
+  ylab("Model estimate") + xlab("Regularization parameter: log(\u03BB)") + coord_cartesian(xlim=c(4.5,-3))
+ggsave("figures/lasso_axcpt.rt_loo.png", width=17.8, height=11, units="cm")
+
+
+(plot <- ggarrange(p1,p2, nrow = 2,labels=c("A","B"), common.legend = T, legend = "right", align = "v"))
+ggsave(plot = plot, file="figures/lasso_axcpt_rt_loo_2row.png", width=17.8, height=22.5, units="cm")
+
+print_cval(axcpt.rt.lasso.error)
+
+axcpt.rt.lasso$glmnet.fit %>%
+  tidy() %>%
+  filter(term != "(Intercept)", lambda==axcpt.rt.lasso$lambda.min) %>% 
+  mutate(importance=abs(estimate),
+         term = fct_reorder(term, importance)) %>% 
+  ggplot(aes(term, importance)) + 
+  geom_col() +
+  theme_minimal(base_size = 12) +
+  ylab("Importance") + xlab("") + coord_flip(ylim =c(0,125)) 
+ggsave(file="figures/lasso_axcpt_rt_loo_imp.png", width=8.7, height=4, units="cm")
+
+axcpt.rt_fit <- axcpt.rt.lasso$glmnet.fit %>%
+  tidy() %>% 
+  filter(lambda == axcpt.rt.lasso$lambda.min)
+axcpt.rt_fit
+
+axcpt.rt_fit <- axcpt.rt.lasso$glmnet.fit %>%
+  tidy() %>% 
+  filter(lambda == axcpt.rt.lasso$lambda.1se)
+axcpt.rt_fit
+```
+
+### Accuracy Data
+```{r}
+mm_acc = model.matrix(cbind(incorrect,correct)  ~  aoa * (Condition*L2_exposure + Condition*PCA_Work + Condition*PCA_General),data=axcpt_ppd.acc.sd)
+
+axcpt.acc.lasso = cv.glmnet(x=mm_acc,y=cbind(axcpt_ppd.acc.sd$incorrect, axcpt_ppd.acc.sd$correct), 
+                        family="binomial", parallel = T,
+                        foldid = as.numeric(axcpt_ppd.acc.sd$.foldsloo))
+
+axcpt.acc.lasso.error <- data.frame(lambda=axcpt.acc.lasso$lambda, cvm=axcpt.acc.lasso$cvm,
+                                 cvlo=axcpt.acc.lasso$cvlo, cvup=axcpt.acc.lasso$cvup,
+                                 lambda.min=axcpt.acc.lasso$lambda.min, 
+                                 lambda.1se = axcpt.acc.lasso$lambda.1se, 
+                                 error_metric=axcpt.acc.lasso$name)
+
+p1 <- axcpt.acc.lasso.error %>% 
+  ggplot(aes(x=log(lambda), y=cvm, ymin=cvlo, ymax=cvup)) + 
+  geom_point(colour="red") + geom_errorbar() +  
+  geom_vline(aes(xintercept = log(lambda.1se)), linetype = 4) +
+  geom_vline(aes(xintercept = log(lambda.min)), linetype = 3) + 
+  theme_minimal(base_size = 12) + ylab(axcpt.acc.lasso$name) + 
+  xlab("Regularization parameter: log(\u03BB)") + coord_cartesian(xlim=c(-8.5,-2))
+ggsave("figures/lasso_axcpt.acc_error_loo.png", width=17.8, height=11, units="cm")
+
+p2 <- axcpt.acc.lasso$glmnet.fit %>%
+  tidy() %>%
+  filter(term!="(Intercept)") %>% 
+  mutate(term = fct_reorder(term, str_length(term))) %>% 
+  ggplot(aes(log(lambda), estimate, color = term)) + 
+  geom_line(size=1.15) +
+  geom_hline(yintercept = 0, linetype = "solid") + 
+  geom_vline(xintercept = log(axcpt.acc.lasso$lambda.1se), linetype = 4) +
+  geom_vline(xintercept = log(axcpt.acc.lasso$lambda.min), linetype = 3) + 
+  theme_minimal(base_size = 12) + guides(colour=guide_legend("Effect", ncol=1)) +
+  ylab("Model estimate") + xlab("Regularization parameter: log(\u03BB)") +  coord_cartesian(xlim=c(-8.5,-2))
+ggsave("figures/lasso_axcpt.acc_loo.png", width=17.8, height=11, units="cm")
+
+(plot <- ggarrange(p1,p2, nrow = 2, labels=c("A","B"), common.legend = T, legend = "right", align = "v"))
+ggsave(plot = plot, file="figures/lasso_axcpt_acc_loo_2row.png", width=17.8, height=22.5, units="cm")
+
+
+print_cval(axcpt.acc.lasso.error)
+
+
+axcpt.acc.lasso$glmnet.fit %>%
+  tidy() %>%
+  filter(term != "(Intercept)", lambda==axcpt.acc.lasso$lambda.min) %>% 
+  mutate(importance=abs(estimate),
+         term = fct_reorder(term, importance)) %>% 
+  ggplot(aes(term, importance)) + 
+  geom_col() +
+  theme_minimal(base_size = 12) +
+  ylab("Importance") + xlab("") + coord_flip(ylim =c(0,2.5))
+ggsave(file="figures/lasso_axcpt_acc_loo_imp.png", width=8.7, height=4, units="cm")
+
+axcpt.acc_fit <- axcpt.acc.lasso$glmnet.fit %>%
+  tidy() %>% 
+  filter(lambda == axcpt.acc.lasso$lambda.min)
+axcpt.acc_fit
+
+axcpt.acc_fit <- axcpt.acc.lasso$glmnet.fit %>%
+  tidy() %>% 
+  filter(lambda == axcpt.acc.lasso$lambda.1se)
+axcpt.acc_fit
+
+```
+
+## 10-fold cross-validation
+### Reaction time data
+```{r}
+mm_rt = model.matrix(meanRT  ~  aoa * (Condition*L2_exposure + Condition*PCA_Work + Condition*PCA_General),data=axcpt_ppd.sd)
+
+
+
+axcpt.rt.lasso = cv.glmnet(x=mm_rt,y=axcpt_ppd.sd$meanRT, type.measure = "mae",
+                        parallel = T, 
+                        foldid = as.numeric(axcpt_ppd.sd$.folds10))
+
+axcpt.rt.lasso.error <- data.frame(lambda=axcpt.rt.lasso$lambda, cvm=axcpt.rt.lasso$cvm,
+                                 cvlo=axcpt.rt.lasso$cvlo, cvup=axcpt.rt.lasso$cvup,
+                                 lambda.min=axcpt.rt.lasso$lambda.min, 
+                                 lambda.1se = axcpt.rt.lasso$lambda.1se, 
+                                 error_metric=axcpt.rt.lasso$name)
+
+p1 <- axcpt.rt.lasso.error %>% 
+  ggplot(aes(x=log(lambda), y=cvm, ymin=cvlo, ymax=cvup)) + 
+  geom_point(colour="red") + geom_errorbar() +  
+  geom_vline(aes(xintercept = log(lambda.1se)), linetype = 4) +
+  geom_vline(aes(xintercept = log(lambda.min)), linetype = 3) + 
+  theme_minimal(base_size = 12) + ylab(axcpt.rt.lasso$name) + 
+  xlab("Regularization parameter: log(\u03BB)") + coord_cartesian(xlim=c(4.5,-3))
+ggsave("figures/lasso_axcpt.rt_error_10fold.png", width=17.8, height=11, units="cm")
+
+p2 <- axcpt.rt.lasso$glmnet.fit %>%
+  tidy() %>%
+  filter(term!="(Intercept)") %>% 
+  mutate(term = fct_reorder(term, str_length(term))) %>% 
+  ggplot(aes(log(lambda), estimate, color = term)) + 
+  geom_line(size=1.15) +
+  geom_hline(yintercept = 0, linetype = "solid") + 
+  geom_vline(xintercept = log(axcpt.rt.lasso$lambda.1se), linetype = 4) +
+  geom_vline(xintercept = log(axcpt.rt.lasso$lambda.min), linetype = 3) + 
+  theme_minimal(base_size = 12) + guides(colour=guide_legend("Effect", ncol=1)) +
+  ylab("Model estimate") + xlab("Regularization parameter: log(\u03BB)") + coord_cartesian(xlim=c(4.5,-3))
+ggsave("figures/lasso_axcpt.rt_10fold.png", width=17.8, height=11, units="cm")
+
+(plot <- ggarrange(p1,p2, nrow = 2, labels=c("A","B"), common.legend = T, legend = "right", align = "v"))
+ggsave(plot = plot, file="figures/lasso_axcpt_rt_10fold_2row.png", width=17.8, height=22.5, units="cm")
+
+
+axcpt.rt_fit <- axcpt.rt.lasso$glmnet.fit %>%
+  tidy() %>% 
+  filter(lambda == axcpt.rt.lasso$lambda.min)
+axcpt.rt_fit
+
+axcpt.rt_fit <- axcpt.rt.lasso$glmnet.fit %>%
+  tidy() %>% 
+  filter(lambda == axcpt.rt.lasso$lambda.1se)
+axcpt.rt_fit
+
+```
+
+### Accuracy Data
+```{r}
+mm_acc = model.matrix(cbind(incorrect,correct)  ~  aoa * (Condition*L2_exposure + Condition*PCA_Work + Condition*PCA_General),data=axcpt_ppd.acc.sd)
+
+axcpt.acc.lasso = cv.glmnet(x=mm_acc,y=cbind(axcpt_ppd.acc.sd$incorrect, axcpt_ppd.acc.sd$correct),
+                        family="binomial", parallel = T,
+                        foldid = as.numeric(axcpt_ppd.acc.sd$.folds10))
+
+axcpt.acc.lasso.error <- data.frame(lambda=axcpt.acc.lasso$lambda, cvm=axcpt.acc.lasso$cvm,
+                                 cvlo=axcpt.acc.lasso$cvlo, cvup=axcpt.acc.lasso$cvup,
+                                 lambda.min=axcpt.acc.lasso$lambda.min, 
+                                 lambda.1se = axcpt.acc.lasso$lambda.1se, 
+                                 error_metric=axcpt.acc.lasso$name)
+
+p1 <- axcpt.acc.lasso.error %>% 
+  ggplot(aes(x=log(lambda), y=cvm, ymin=cvlo, ymax=cvup)) + 
+  geom_point(colour="red") + geom_errorbar() +  
+  geom_vline(aes(xintercept = log(lambda.1se)), linetype = 4) +
+  geom_vline(aes(xintercept = log(lambda.min)), linetype = 3) + 
+  theme_minimal(base_size = 12) + ylab(axcpt.acc.lasso$name) + 
+  xlab("Regularization parameter: log(\u03BB)") + coord_cartesian(xlim=c(-8.5,-2))
+ggsave("figures/lasso_axcpt.acc_error_10fold.png", width=17.8, height=11, units="cm")
+
+p2 <- axcpt.acc.lasso$glmnet.fit %>%
+  tidy() %>%
+  filter(term!="(Intercept)") %>% 
+  mutate(term = fct_reorder(term, str_length(term))) %>% 
+  ggplot(aes(log(lambda), estimate, color = term)) + 
+  geom_line(size=1.15) +
+  geom_hline(yintercept = 0, linetype = "solid") + 
+  geom_vline(xintercept = log(axcpt.acc.lasso$lambda.1se), linetype = 4) +
+  geom_vline(xintercept = log(axcpt.acc.lasso$lambda.min), linetype = 3) + 
+  theme_minimal(base_size = 12) + guides(colour=guide_legend("Effect", ncol=1)) +
+  ylab("Model estimate") + xlab("Regularization parameter: log(\u03BB)") +  coord_cartesian(xlim=c(-8.5,-2))
+ggsave("figures/lasso_axcpt.acc_10fold.png", width=17.8, height=11, units="cm")
+
+(plot <- ggarrange(p1,p2, nrow = 2, labels=c("A","B"), common.legend = T, legend = "right", align = "v"))
+ggsave(plot = plot, file="figures/lasso_axcpt_acc_10fold_2row.png", width=17.8, height=22.5, units="cm")
+
+axcpt.acc_fit <- axcpt.acc.lasso$glmnet.fit %>%
+  tidy() %>% 
+  filter(lambda == axcpt.acc.lasso$lambda.1se)
+axcpt.acc_fit
+
+```
+
+
+# Analysis 3: LHQ lasso regression
+
+## Leave-one-out cross-validation
+### L2 accentedness
+```{r}
+accent_mm <- model.matrix(meanAccent ~ aoa * L2_exposure + aoa * 
+                          PCA_General + aoa * PCA_Work, data=exec_lhq_ppd)
+
+accent.lasso = cv.glmnet(x=accent_mm,
+                         y=exec_lhq_ppd$meanAccent, type.measure = "mae",
+                         parallel = T, 
+                         foldid = as.numeric(exec_lhq_ppd$.foldsloo))
+
+accent.lasso.error <- data.frame(lambda=accent.lasso$lambda, cvm=accent.lasso$cvm,
+                                 cvlo=accent.lasso$cvlo, cvup=accent.lasso$cvup,
+                                 lambda.min=accent.lasso$lambda.min, 
+                                 lambda.1se = accent.lasso$lambda.1se, 
+                                 error_metric=accent.lasso$name)
+
+p1 <- accent.lasso.error %>% 
+  ggplot(aes(x=log(lambda), y=cvm, ymin=cvlo, ymax=cvup)) + 
+  geom_point(colour="red") + geom_errorbar() +  
+  geom_vline(aes(xintercept = log(lambda.1se)), linetype = 4) +
+  geom_vline(aes(xintercept = log(lambda.min)), linetype = 3) + 
+  theme_minimal(base_size = 12) + ylab(accent.lasso$name) + xlab("Regularization parameter: log(\u03BB)") + coord_cartesian(xlim=c(0,-6))
+ggsave("figures/lasso_accent_error_loo.png", width=17.8, height=11, units="cm")
+
+p2 <- accent.lasso$glmnet.fit %>%
+  tidy() %>%
+  filter(term!="(Intercept)") %>% 
+  mutate(term = fct_reorder(term, str_length(term))) %>% 
+  ggplot(aes(log(lambda), estimate, color = term)) + 
+  geom_line(size=1.15) +
+  geom_hline(yintercept = 0, linetype = "solid") + 
+  geom_vline(xintercept = log(accent.lasso$lambda.1se), linetype = 4) +
+  geom_vline(xintercept = log(accent.lasso$lambda.min), linetype = 3) + 
+  #scale_color_brewer(palette = "Dark2") +
+  theme_minimal(base_size = 12) + guides(colour=guide_legend("Effect", ncol=1)) +
+  ylab("Model estimate") + xlab("Regularization parameter: log(\u03BB)") + coord_cartesian(xlim=c(0,-6))
+ggsave("figures/lasso_accent_loo.png", width=17.8, height=11, units="cm")
+
+(plot <- ggarrange(p1,p2, nrow = 2, labels=c("A","B"), common.legend = T, legend = "right", align = "v"))
+ggsave(plot = plot, file="figures/lasso_accent_loo_2row.png", width=17.8, height=22.5, units="cm")
+
+
+print_cval(accent.lasso.error)
+
+
+accent.lasso$glmnet.fit %>%
+  tidy() %>%
+  filter(term != "(Intercept)", lambda==accent.lasso$lambda.min) %>% 
+  mutate(importance=abs(estimate),
+         term = fct_reorder(term, importance)) %>% 
+  ggplot(aes(term, importance)) + 
+  geom_col() +
+  theme_minimal(base_size = 12) +
+  ylab("Importance") + xlab("") + coord_flip(ylim=c(0,1))
+ggsave(file="figures/lasso_accent_loo_imp.png", width=8.7, height=5, units="cm")
+
+
+accent_fit <- accent.lasso$glmnet.fit %>%
+  tidy() %>% 
+  filter(lambda == accent.lasso$lambda.min)
+accent_fit
+
+accent_fit <- accent.lasso$glmnet.fit %>%
+  tidy() %>% 
+  filter(lambda == accent.lasso$lambda.1se)
+accent_fit
+
+```
+
+### L2 ability
+```{r}
+abilities_mm <- model.matrix(meanL2ability ~ aoa * L2_exposure + aoa * 
+                          PCA_General + aoa * PCA_Work, data=exec_lhq_ppd)
+
+
+abilities.lasso = cv.glmnet(x=abilities_mm,y=exec_lhq_ppd$meanL2ability, type.measure = "mae",
+                            parallel = T, 
+                            foldid = as.numeric(exec_lhq_ppd$.foldsloo))
+
+abilities.lasso.error <- data.frame(lambda=abilities.lasso$lambda, cvm=abilities.lasso$cvm,
+                                 cvlo=abilities.lasso$cvlo, cvup=abilities.lasso$cvup,
+                                 lambda.min=abilities.lasso$lambda.min, 
+                                 lambda.1se = abilities.lasso$lambda.1se, 
+                                 error_metric=abilities.lasso$name)
+
+p1 <- abilities.lasso.error %>% 
+  ggplot(aes(x=log(lambda), y=cvm, ymin=cvlo, ymax=cvup)) + 
+  geom_point(colour="red") + geom_errorbar() +  
+  geom_vline(aes(xintercept = log(lambda.1se)), linetype = 4) +
+  geom_vline(aes(xintercept = log(lambda.min)), linetype = 3) + 
+  theme_minimal(base_size = 12) + ylab(abilities.lasso$name) + 
+  xlab("Regularization parameter: log(\u03BB)") + coord_cartesian(xlim=c(0,-6))
+ggsave("figures/lasso_abilities_error_loo.png", width=17.8, height=11, units="cm")
+
+p2 <- abilities.lasso$glmnet.fit %>%
+  tidy() %>%
+  filter(term!="(Intercept)") %>% 
+  mutate(term = fct_reorder(term, str_length(term))) %>% 
+  ggplot(aes(log(lambda), estimate, color = term)) + 
+  geom_line(size=1.15) +
+  geom_hline(yintercept = 0, linetype = "solid") + 
+  geom_vline(xintercept = log(abilities.lasso$lambda.1se), linetype = 4) +
+  geom_vline(xintercept = log(abilities.lasso$lambda.min), linetype = 3) + 
+  #scale_color_brewer(palette = "Dark2") +
+  theme_minimal(base_size = 12) + guides(colour=guide_legend("Effect", ncol=1)) +
+  ylab("Model estimate") + xlab("Regularization parameter: log(\u03BB)") + coord_cartesian(xlim=c(0,-6))
+ggsave("figures/lasso_abilities_loo.png", width=17.8, height=11, units="cm")
+
+(plot <- ggarrange(p1,p2, nrow = 2, labels=c("A","B"), common.legend = T, legend = "right", align = "v"))
+ggsave(plot = plot, file="figures/lasso_ablities_loo_2row.png", width=17.8, height=22.5, units="cm")
+
+
+print_cval(abilities.lasso.error)
+
+abilities.lasso$glmnet.fit %>%
+  tidy() %>%
+  filter(term != "(Intercept)", lambda==abilities.lasso$lambda.min) %>% 
+  mutate(importance=abs(estimate),
+         term = fct_reorder(term, importance)) %>% 
+  ggplot(aes(term, importance)) + 
+  geom_col() +
+  theme_minimal(base_size = 12) +
+  ylab("Importance") + xlab("") + coord_flip(ylim =c(0,1)) 
+ggsave(file="figures/lasso_abilities_loo_imp.png", width=8.7, height=5, units="cm")
+
+abilities_fit <- abilities.lasso$glmnet.fit %>%
+  tidy() %>% 
+  filter(lambda == abilities.lasso$lambda.min)
+abilities_fit
+
+
+abilities_fit <- abilities.lasso$glmnet.fit %>%
+  tidy() %>% 
+  filter(lambda == abilities.lasso$lambda.1se)
+abilities_fit
+
+```
+
+
+## 10-fold cross-validation
+### L2 accentedness
+```{r}
+accent_mm <- model.matrix(meanAccent ~ aoa * (L2_exposure + PCA_General + PCA_Work), data=exec_lhq_ppd)
+
+accent.lasso = cv.glmnet(x=accent_mm,
+                         y=exec_lhq_ppd$meanAccent, type.measure = "mae",
+                         parallel = T,
+                         foldid = as.numeric(exec_lhq_ppd$.folds10))
+
+accent.lasso.error <- data.frame(lambda=accent.lasso$lambda, cvm=accent.lasso$cvm,
+                                 cvlo=accent.lasso$cvlo, cvup=accent.lasso$cvup,
+                                 lambda.min=accent.lasso$lambda.min, 
+                                 lambda.1se = accent.lasso$lambda.1se, 
+                                 error_metric=accent.lasso$name)
+
+p1 <- accent.lasso.error %>% 
+  ggplot(aes(x=log(lambda), y=cvm, ymin=cvlo, ymax=cvup)) + 
+  geom_point(colour="red") + geom_errorbar() +  
+  geom_vline(aes(xintercept = log(lambda.1se)), linetype = 4) +
+  geom_vline(aes(xintercept = log(lambda.min)), linetype = 3) + 
+  theme_minimal(base_size = 12) + ylab(accent.lasso$name) + xlab("Regularization parameter: log(\u03BB)") + coord_cartesian(xlim=c(0,-6))
+ggsave("figures/lasso_accent_error_10fold.png", width=17.8, height=11, units="cm")
+
+p2 <- accent.lasso$glmnet.fit %>%
+  tidy() %>%
+  filter(term!="(Intercept)") %>% 
+  mutate(term = fct_reorder(term, str_length(term))) %>% 
+  ggplot(aes(log(lambda), estimate, color = term)) + 
+  geom_line(size=1.15) +
+  geom_hline(yintercept = 0, linetype = "solid") + 
+  geom_vline(xintercept = log(accent.lasso$lambda.1se), linetype = 4) +
+  geom_vline(xintercept = log(accent.lasso$lambda.min), linetype = 3) + 
+  #scale_color_brewer(palette = "Dark2") +
+  theme_minimal(base_size = 12) + guides(colour=guide_legend("Effect", ncol=1)) +
+  ylab("Model estimate") + xlab("Regularization parameter: log(\u03BB)") + coord_cartesian(xlim=c(0,-6))
+ggsave("figures/lasso_accent_10fold.png", width=17.8, height=11, units="cm")
+
+
+(plot <- ggarrange(p1,p2, nrow = 2, labels=c("A","B"), common.legend = T, legend = "right", align = "v"))
+ggsave(plot = plot, file="figures/lasso_accent_10fold_2row.png", width=17.8, height=22.5, units="cm")
+
+
+
+accent_fit <- accent.lasso$glmnet.fit %>%
+  tidy() %>% 
+  filter(lambda == accent.lasso$lambda.1se)
+accent_fit
+```
+
+### L2 ability
+```{r}
+abilities_mm <- model.matrix(meanL2ability ~ aoa * (L2_exposure + PCA_General + PCA_Work), data=exec_lhq_ppd)
+
+
+abilities.lasso = cv.glmnet(x=abilities_mm,y=exec_lhq_ppd$meanL2ability,
+                            parallel = T, type.measure = "mae",
+                            foldid = as.numeric(exec_lhq_ppd$.folds10))
+
+abilities.lasso.error <- data.frame(lambda=abilities.lasso$lambda, cvm=abilities.lasso$cvm,
+                                 cvlo=abilities.lasso$cvlo, cvup=abilities.lasso$cvup,
+                                 lambda.min=abilities.lasso$lambda.min, 
+                                 lambda.1se = abilities.lasso$lambda.1se, 
+                                 error_metric=abilities.lasso$name)
+
+p1 <- abilities.lasso.error %>% 
+  ggplot(aes(x=log(lambda), y=cvm, ymin=cvlo, ymax=cvup)) + 
+  geom_point(colour="red") + geom_errorbar() +  
+  geom_vline(aes(xintercept = log(lambda.1se)), linetype = 4) +
+  geom_vline(aes(xintercept = log(lambda.min)), linetype = 3) + 
+  theme_minimal(base_size = 12) + ylab(abilities.lasso$name) + 
+  xlab("Regularization parameter: log(\u03BB)") + coord_cartesian(xlim=c(0,-6))
+ggsave("figures/lasso_abilities_error_10fold.png", width=17.8, height=11, units="cm")
+
+p2 <- abilities.lasso$glmnet.fit %>%
+  tidy() %>%
+  filter(term!="(Intercept)") %>% 
+  mutate(term = fct_reorder(term, str_length(term))) %>% 
+  ggplot(aes(log(lambda), estimate, color = term)) + 
+  geom_line(size=1.15) +
+  geom_hline(yintercept = 0, linetype = "solid") + 
+  geom_vline(xintercept = log(abilities.lasso$lambda.1se), linetype = 4) +
+  geom_vline(xintercept = log(abilities.lasso$lambda.min), linetype = 3) +
+  #scale_color_brewer(palette = "Dark2") +
+  theme_minimal(base_size = 12) + guides(colour=guide_legend("Effect", ncol=1)) +
+  ylab("Model estimate") + xlab("Regularization parameter: log(\u03BB)") + coord_cartesian(xlim=c(0,-6))
+ggsave("figures/lasso_abilities_10fold.png", width=17.8, height=11, units="cm")
+
+(plot <- ggarrange(p1,p2, nrow = 2, labels=c("A","B"), common.legend = T, legend = "right", align = "v"))
+ggsave(plot = plot, file="figures/lasso_abilities_10fold_2row.png", width=17.8, height=22.5, units="cm")
+
+
+abilities_fit <- abilities.lasso$glmnet.fit %>%
+  tidy() %>% 
+  filter(lambda == abilities.lasso$lambda.1se)
+abilities_fit
+
+```
+
+
