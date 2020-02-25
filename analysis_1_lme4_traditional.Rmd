@@ -12,7 +12,6 @@ output:
   word_document:
     toc: yes
 ---
-
 # Preliminaries
 ```{r pre, echo=F, include=F}
 source("loadPackages.R")
@@ -28,7 +27,6 @@ knitr::opts_chunk$set(fig.show='hold')
 
 set.seed(420)
 ```
-
 
 # Loading exec control data
 ```{r}
@@ -52,7 +50,6 @@ exec_lhq <- exec_lhq %>%
 ```{r}
 exec_lhq_ppd <- preprocess_steps(exec_lhq)
 ```
-
 
 # Join LHQ and AXCPT
 ```{r results='hide', warning = FALSE}
