@@ -36,32 +36,250 @@ exec_lhq<- as.data.table(fread("subjectdata/axcpt_lhq_data_forpub.csv"))
 axcpt <- as.data.table(fread("rawdata/axcpt_trial_data.csv",stringsAsFactors = F, sep=","))
 ```
 
+# Create folds
+```{r}
+k=10
+k_loo = length(unique(exec_lhq$participant))
+
+exec_lhq <- fold(exec_lhq, k = k, id_col = 'participant') %>% ungroup()
+exec_lhq <- fold(exec_lhq, k = k_loo, id_col = 'participant') %>% ungroup()
+
+exec_lhq <- exec_lhq %>% 
+  rename(.folds.10 = .folds_1, .folds.loo = .folds_2)
+```
+
 # Entropy PCA and scaling of variables
 ```{r}
 exec_lhq_ppd <- preprocess_steps(exec_lhq)
 ```
 
+
 # Join LHQ and AXCPT
 ```{r results='hide', warning = FALSE}
+# Merge behavioral and subject data (restricting to only those in subject data frame)
 axcpt_ppd <- left_join(axcpt, exec_lhq_ppd, by="participant",suffix=c(".x",""))
 axcpt_ppd <- axcpt_preprocess(axcpt_ppd)
+
+sd.rt <- axcpt_ppd %>% 
+  group_by(participant) %>% 
+  summarise(meanRT = mean(RT_correct,na.rm=T)) %>% 
+  ungroup()
+
+sd.acc <- axcpt_ppd %>% 
+  group_by(participant) %>% 
+  summarise(meanAcc=mean(accuracy_target))
+
+sd.rt <- sd.rt %>% mutate(gmean = mean(meanRT), 
+                          gsd = sd(meanRT),
+                          lower = gmean - 2.5*gsd,
+                          upper = gmean + 2.5*gsd,
+                          outlier = ifelse(meanRT >= lower & meanRT <= upper,"fine","outlier"))
+
+exclude <- sd.rt$participant[sd.rt$outlier=="outlier"]
+
+axcpt_ppd <- axcpt_ppd[!(axcpt_ppd$participant %in% exclude),]
+
+exec_lhq <- exec_lhq[!(exec_lhq$participant %in% exclude),]
+exec_lhq_ppd <- exec_lhq_ppd[!(exec_lhq_ppd$participant %in% exclude),]
+
+exec_lhq_ppd <- fold(exec_lhq_ppd, k = k_loo - length(exclude), id_col = 'participant', handle_existing_fold_cols = "remove") %>% ungroup()
+
+k_loo = k_loo - length(exclude)
+
+exec_lhq_ppd <- exec_lhq_ppd %>% 
+  rename(.folds.loo = .folds)
+
+newfolds <- exec_lhq_ppd %>% select(participant, .folds.loo)
+
+axcpt_ppd <- axcpt_ppd %>% select(-`.folds.loo`)
+axcpt_ppd <- axcpt_ppd %>% left_join(newfolds)
 ```
 
-# Analysis 1: AXCPT, traditional mixed effects approach
+# Jobs data
 ```{r}
-mod.rt.0  <- "RT_correct  ~  Condition + (1|participant)"
+axcpt_ppd$occupation <- factor(axcpt_ppd$occupation)
+contrasts(axcpt_ppd$occupation) <- contr.sum(4)
+```
 
-mod.rt.1  <- "RT_correct  ~  Condition*aoa + Condition*L2_exposure + (1|participant)"
+# Experiment version
+```{r}
+axcpt_ppd$ExperimentName <- factor(axcpt_ppd$ExperimentName)
+contrasts(axcpt_ppd$ExperimentName) <- contr.sum(3)
+```
 
-mod.rt.1.1  <- "RT_correct  ~  Condition*PCA_Work + Condition*PCA_General + (1|participant)"
+# Data plots
+## summary stats
 
-mod.rt.1.1.1  <- "RT_correct  ~  Condition*PCA_General + (1|participant)"
+```{r}
+data.agg <- exec_lhq %>% select(participant,age,
+aoa,
+yearsBilingual,
+L1_current_exposure,
+L2_current_exposure,
+L3_current_exposure,
+ReadEntropy,
+SpeakEntropy,
+HomeEntropy,
+WorkEntropy,
+SocialEntropy,
+meanAccent,
+meanL2ability)
 
-mod.rt.1.2  <- "RT_correct  ~  Condition*aoa + Condition*L2_exposure + Condition*PCA_General + (1|participant)"
+stargazer(data.agg, type="html", out="tables/summary_stats.html")
+```
 
-mod.rt.2  <- "RT_correct  ~  Condition*aoa + Condition*L2_exposure + Condition*PCA_Work + Condition*PCA_General + (1|participant)"
+## Group level
+```{r}
+sd.rt  <- sem(axcpt_ppd, RT_correct, participant, Condition)
+sd.acc <- sem(axcpt_ppd, accuracy_target, participant, Condition)
 
-mod.rt.3  <- "RT_correct  ~  aoa * (Condition*L2_exposure + Condition*PCA_Work + Condition*PCA_General) + (1|participant)"
+sd.rt$Condition <- factor(sd.rt$Condition, levels=c("AY","BX","BY","AX"))
+sd.acc$Condition <- factor(sd.acc$Condition, levels=c("AY","BX","BY","AX"))
+
+p1 <- ggplot(sd.rt, aes(x=Condition,y=mean_RT_correct,ymin=lower,ymax=upper, fill=Condition)) +
+	geom_col() + geom_errorbar(width=.2) +
+	ylab("Mean RT (in ms)") + xlab("Trial type") + labs(fill="Trial type") + 
+	theme_minimal(base_size = 12) + scale_fill_brewer(palette = "Set1")
+
+
+p2 <- ggplot(sd.acc, aes(x=Condition,y=mean_accuracy_target,ymin=lower,ymax=upper, fill=Condition)) +
+	geom_col() + geom_errorbar(width=.2) +
+	ylab("Mean accuracy") + xlab("Trial type") + labs(fill="Trial type") +
+	theme_minimal(base_size = 12) + scale_fill_brewer(palette = "Set1")
+
+(plot <- ggarrange(p1, p2, ncol=2, labels=c("A","B"), common.legend = T, legend = "right", align = "v"))
+ggsave(plot=plot, file="figures/mean_acc_rt.png", width=12, height=6, units="cm")
+```
+
+## RT: individual differences
+```{r}
+rt.sd <- axcpt_ppd %>% 
+  group_by(participant, L2_current_exposure, aoa.x, PCA_General, PCA_Work, Condition) %>% 
+  summarise(meanRT=mean(RT_correct, na.rm=T), 
+            sdRT = sd(RT_correct, na.rm=T),
+            N=n(),
+            semRT = sdRT/sqrt(N))
+
+
+rt.sd$Condition <- factor(rt.sd$Condition, levels=c("AY","BX","BY","AX"))
+
+p1 <- ggplot(rt.sd, aes(x=aoa.x, y = meanRT, colour=Condition))+ geom_smooth(method="lm") +
+  geom_point(alpha=.2) +
+  ylab("Reaction time (in ms)") + xlab("L2 AoA") +
+  theme_minimal(base_size = 12) + scale_colour_brewer(palette = "Set1")
+
+p2 <- ggplot(rt.sd, aes(x=L2_current_exposure, y = meanRT, colour=Condition)) +
+    geom_point(alpha=.2) +
+  geom_smooth(method="lm") + ylab("Reaction time (in ms)") + xlab("L2 current exposure") +
+  theme_minimal(base_size = 12) + scale_colour_brewer(palette = "Set1")
+
+p3 <- ggplot(rt.sd, aes(x=PCA_General, y = meanRT, colour=Condition)) +
+  geom_smooth(method="lm") +  geom_point(alpha=.2) +
+	ylab("Reaction time (in ms)") + xlab("PC: General entropy") +
+	theme_minimal(base_size = 12) + scale_colour_brewer(palette = "Set1")
+
+p4 <- ggplot(rt.sd, aes(x=PCA_Work, y = meanRT, colour=Condition)) +
+  geom_smooth(method="lm")+   geom_point(alpha=.2) +
+	ylab("Reaction time (in ms)") + xlab("PC: Work entropy") +
+	theme_minimal(base_size = 12) + scale_colour_brewer(palette = "Set1")
+
+
+(plot <- ggarrange(p1,p2,p3,p4, nrow=2, ncol=2, labels = c("A","B","C","D"), common.legend = T, legend="right", align = "hv"))
+ggsave(plot=plot, file="figures/rt_by_id.png", width=17.8, height=17.5, units="cm")
+```
+
+### RT: individual differences: raw
+```{r}
+raw <- axcpt_ppd[]
+raw$Condition <- factor(raw$Condition, levels=c("AY","BX","BY","AX"))
+
+
+
+p1 <- ggplot(raw, aes(x=aoa.x, y = RT_correct, colour=Condition))+ 
+  geom_point(alpha=.05) +
+  geom_smooth(method="lm") +
+  ylab("Reaction time (in ms)") + xlab("L2 AoA") +
+  theme_minimal(base_size = 12) + scale_colour_brewer(palette = "Set1")
+
+p2 <- ggplot(raw, aes(x=L2_current_exposure, y = RT_correct, colour=Condition)) +
+  geom_point(alpha=.05) +
+  geom_smooth(method="lm") +
+  ylab("Reaction time (in ms)") + xlab("L2 current exposure") +
+  theme_minimal(base_size = 12) + scale_colour_brewer(palette = "Set1")
+
+p3 <- ggplot(raw, aes(x=PCA_General, y = RT_correct, colour=Condition)) +
+  geom_point(alpha=.05) +
+  geom_smooth(method="lm") +  
+	ylab("Reaction time (in ms)") + xlab("PC: General entropy") +
+	theme_minimal(base_size = 12) + scale_colour_brewer(palette = "Set1")
+
+p4 <- ggplot(raw, aes(x=PCA_Work, y = RT_correct, colour=Condition)) +
+  geom_point(alpha=.05) +
+  geom_smooth(method="lm")+   
+	ylab("Reaction time (in ms)") + xlab("PC: Work entropy") +
+	theme_minimal(base_size = 12) + scale_colour_brewer(palette = "Set1")
+
+
+(plot <- ggarrange(p1,p2,p3,p4, nrow=2, ncol=2, labels = c("A","B","C","D"), common.legend = T, legend="right", align = "hv"))
+ggsave(plot=plot, file="figures/rt_by_id_raw.png", width=17.8, height=17.5, units="cm")
+ 
+```
+
+## ACC: individual differences
+```{r}
+acc.sd <- axcpt_ppd %>% 
+  group_by(participant, L2_current_exposure, aoa.x, PCA_General, PCA_Work, Condition) %>% 
+  summarise(meanACC=mean(accuracy_target, na.rm=T), 
+            sdACC = sd(accuracy_target, na.rm=T),
+            N=n(),
+            semACC = sdACC/sqrt(N))
+
+p1 <- ggplot(acc.sd, aes(x=aoa.x, y = meanACC, colour=Condition))+ geom_smooth(method="lm") +
+  geom_point(alpha=.2) +
+  ylab("Mean accuracy") + xlab("L2 AoA") +
+  theme_minimal(base_size = 12) + scale_colour_brewer(palette = "Set1")
+
+p2 <- ggplot(acc.sd, aes(x=L2_current_exposure, y = meanACC, colour=Condition)) +
+    geom_point(alpha=.2) +
+  geom_smooth(method="lm") + ylab("Mean accuracy") + xlab("L2 current exposure") +
+  theme_minimal(base_size = 12) + scale_colour_brewer(palette = "Set1")
+
+p3 <- ggplot(acc.sd, aes(x=PCA_General, y = meanACC, colour=Condition)) +
+  geom_smooth(method="lm") +  geom_point(alpha=.2) +
+	ylab("Mean accuracy") + xlab("PC: General entropy") +
+	theme_minimal(base_size = 12) + scale_colour_brewer(palette = "Set1")
+
+p4 <- ggplot(acc.sd, aes(x=PCA_Work, y = meanACC, colour=Condition)) +
+  geom_smooth(method="lm")+   geom_point(alpha=.2) +
+	ylab("Mean accuracy") + xlab("PC: Work entropy") +
+	theme_minimal(base_size = 12) + scale_colour_brewer(palette = "Set1")
+
+
+(plot <- ggarrange(p1,p2,p3,p4, nrow=2, ncol=2, labels = c("A","B","C","D"), common.legend = T, legend="right", align = "hv"))
+ggsave(plot=plot, file="figures/acc_by_id.png", width=17.8, height=17.5, units="cm")
+
+```
+
+
+# Set loo fold
+```{r}
+axcpt_ppd$.folds <- axcpt_ppd$.folds.loo
+axcpt_ppd <- axcpt_ppd[axcpt_ppd$Condition!="AX",]
+```
+
+# Traditional AXCPT analysis 
+```{r}
+
+
+mod.rt.0  <- "RT_correct  ~  Condition + occupation + (1|participant)"
+
+mod.rt.1  <- "RT_correct  ~  Condition*aoa + Condition*L2_exposure +  (1|participant)"
+
+mod.rt.1.1  <- "RT_correct  ~  Condition*PCA_Work + Condition*PCA_General +  (1|participant)"
+
+mod.rt.2  <- "RT_correct  ~  Condition*aoa + Condition*L2_exposure + Condition*PCA_Work + Condition*PCA_General +  (1|participant)"
+
+mod.rt.3  <- "RT_correct  ~  aoa * (Condition*L2_exposure + Condition*PCA_Work + Condition*PCA_General) +  (1|participant)"
 
 
 
@@ -77,33 +295,102 @@ mod.acc.2  <- "acc        ~   Condition*aoa + Condition*L2_exposure + Condition*
 
 mod.acc.3  <- "acc        ~   aoa * (Condition*L2_exposure + Condition*PCA_Work + Condition*PCA_General) + (1|participant)"
 
-mod.acc.4  <- "acc        ~  aoa*Condition*PCA_Work*PCA_General+ (1|participant)"
+
 ```
 
-## Reaction time data
+## RT models
 ```{r}
-all.rt.0    <- lmer(mod.rt.0, axcpt_ppd)
-all.rt.1    <- lmer(mod.rt.1, axcpt_ppd)
-all.rt.1.1.1  <- lmer(mod.rt.1.1, axcpt_ppd)
-all.rt.1.1  <- lmer(mod.rt.1.1, axcpt_ppd)
-all.rt.1.2  <- lmer(mod.rt.1.2, axcpt_ppd)
-all.rt.2    <- lmer(mod.rt.2, axcpt_ppd)
-all.rt.3    <- lmer(mod.rt.3, axcpt_ppd)
+#axcpt_ppd <- axcpt_ppd[!(axcpt_ppd$participant %in% exclude),]
+axcpt_ppd$Condition<-relevel(axcpt_ppd$Condition, ref="BX")
+all.rt.0    <- lmer(mod.rt.0, axcpt_ppd, REML=F)
+all.rt.1    <- lmer(mod.rt.1, axcpt_ppd, REML=F)
+all.rt.1.1  <- lmer(mod.rt.1.1, axcpt_ppd, REML=F)
+all.rt.2    <- lmer(mod.rt.2, axcpt_ppd, REML=F)
+all.rt.3    <- lmer(mod.rt.3, axcpt_ppd, REML=F)
 ```
 
 ```{r}
 anova(all.rt.0, all.rt.1, all.rt.2, all.rt.3)
-AIC(all.rt.0, all.rt.1, all.rt.2, all.rt.3)
-BIC(all.rt.0, all.rt.1, all.rt.2, all.rt.3)
 ```
 
 ```{r}
-anova(all.rt.0, all.rt.1.1, all.rt.2)
-
-anova(all.rt.0, all.rt.1, all.rt.1.2, all.rt.2)
-anova(all.rt.0, all.rt.1.1.1, all.rt.1.2, all.rt.2)
+kable(anova(all.rt.0, all.rt.1, all.rt.2, all.rt.3))
+kable(anova(all.rt.0, all.rt.1.1, all.rt.2, all.rt.3))
 ```
 
+
+```{r}
+AIC(all.rt.0, all.rt.1, all.rt.1.1, all.rt.2, all.rt.3)
+BIC(all.rt.0, all.rt.1, all.rt.1.1, all.rt.2, all.rt.3)
+```
+So entropy explains more then L2 exp and aoa but not vice versa
+
+```{r}
+summ(all.rt.1.1, confint=T, digits=3)
+summary(all.rt.1.1)
+anova(all.rt.1.1)
+```
+
+```{r}
+ef<-	as.data.frame(Effect(c("PCA_Work","Condition"),all.rt.1.1, xlevels=list(PCA_Work=c(-2,-1,0,1,2)),
+													confidence.level = .686))
+
+f1a <- ggplot(ef, aes(x=PCA_Work, y=fit, ymin=lower,ymax=upper,group=Condition))	+  
+	geom_line(aes(colour=Condition), size=1) + geom_ribbon(fill="grey", alpha=.3) +
+	coord_cartesian(ylim=c(300,550)) +
+	ylab("Model-estimated\nreaction time (in ms)") + xlab("PC: Work Entropy") +
+		scale_colour_brewer(palette = "Set1") + theme_bw(base_size=12) + 
+  labs(color="Trial type") + theme(panel.border = element_blank(), panel.grid.major = element_blank(),
+panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"))
+
+#ggsave("figures/axcpt_rt_work_condition.png", width=8.9, height=6, units = "cm")
+
+ef<-	as.data.frame(Effect(c("PCA_General","Condition"),all.rt.1.1, xlevels=list(PCA_General=c(-2,-1,0,1,2)),
+													confidence.level = .686))
+
+f1b <- ggplot(ef, aes(x=PCA_General, y=fit, ymin=lower,ymax=upper,group=Condition))	+  
+	geom_line(aes(colour=Condition), size=1) + geom_ribbon(fill="grey", alpha=.3) +
+	coord_cartesian(ylim=c(300,550)) +
+	ylab("Model-estimates\nreaction time (in ms)") + xlab("PC: General Entropy") +
+  labs(color="Trial type") +
+		scale_colour_brewer(palette = "Set1") + theme_bw(base_size = 12) + theme(panel.border = element_blank(), panel.grid.major = element_blank(),
+panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"))
+
+#ggsave("figures/axcpt_rt_general_condition.png", width=8.9, height=6, units = "cm")
+
+(f1 <- ggarrange(f1b,f1a, labels=c("A","B"), legend="bottom", common.legend = T))
+
+ggsave(plot = f1, "figures/traditional_rt_lme4_effects.png", width=17.8, height=8, units = "cm")
+```
+
+
+## RT models students
+```{r}
+axcpt_ppd_students <- axcpt_ppd[axcpt_ppd$occupation=="student",]
+
+#axcpt_ppd <- axcpt_ppd[!(axcpt_ppd$participant %in% exclude),]
+axcpt_ppd_students$Condition<-relevel(axcpt_ppd_students$Condition, ref="BX")
+all.rt.0    <- lmer(mod.rt.0, axcpt_ppd_students, REML=F)
+all.rt.1    <- lmer(mod.rt.1, axcpt_ppd_students, REML=F)
+all.rt.1.1  <- lmer(mod.rt.1.1, axcpt_ppd_students, REML=F)
+all.rt.2    <- lmer(mod.rt.2, axcpt_ppd_students, REML=F)
+all.rt.3    <- lmer(mod.rt.3, axcpt_ppd_students, REML=F)
+```
+
+```{r}
+anova(all.rt.0, all.rt.1, all.rt.2, all.rt.3)
+```
+
+```{r}
+kable(anova(all.rt.0, all.rt.1, all.rt.2, all.rt.3))
+kable(anova(all.rt.0, all.rt.1.1, all.rt.2, all.rt.3))
+```
+
+
+```{r}
+AIC(all.rt.0, all.rt.1, all.rt.1.1, all.rt.2, all.rt.3)
+BIC(all.rt.0, all.rt.1, all.rt.1.1, all.rt.2, all.rt.3)
+```
 So entropy explains more then L2 exp and aoa but not vice versa
 
 ```{r}
@@ -141,7 +428,147 @@ panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"))
 ggsave(plot = f1, "figures/traditional_rt_lme4_effects.png", width=17.8, height=8, units = "cm")
 ```
 
-## Accuracy data
+## RT models workers
+```{r}
+axcpt_ppd_workers <- axcpt_ppd[axcpt_ppd$occupation=="work",]
+
+#axcpt_ppd <- axcpt_ppd[!(axcpt_ppd$participant %in% exclude),]
+axcpt_ppd_workers$Condition<-relevel(axcpt_ppd_workers$Condition, ref="BX")
+all.rt.0    <- lmer(mod.rt.0, axcpt_ppd_workers, REML=F)
+all.rt.1    <- lmer(mod.rt.1, axcpt_ppd_workers, REML=F)
+all.rt.1.1  <- lmer(mod.rt.1.1, axcpt_ppd_workers, REML=F)
+all.rt.2    <- lmer(mod.rt.2, axcpt_ppd_workers, REML=F)
+all.rt.3    <- lmer(mod.rt.3, axcpt_ppd_workers, REML=F)
+```
+
+```{r}
+anova(all.rt.0, all.rt.1, all.rt.2, all.rt.3)
+```
+
+```{r}
+kable(anova(all.rt.0, all.rt.1, all.rt.2, all.rt.3))
+kable(anova(all.rt.0, all.rt.1.1, all.rt.2, all.rt.3))
+```
+
+
+```{r}
+AIC(all.rt.0, all.rt.1, all.rt.1.1, all.rt.2, all.rt.3)
+BIC(all.rt.0, all.rt.1, all.rt.1.1, all.rt.2, all.rt.3)
+```
+So entropy explains more then L2 exp and aoa but not vice versa
+
+```{r}
+summ(all.rt.1.1, confint=T, digits=3)
+anova(all.rt.1.1)
+```
+
+```{r}
+ef<-	as.data.frame(Effect(c("PCA_Work","Condition"),all.rt.1.1, xlevels=list(PCA_Work=c(-2,-1,0,1,2)),
+													confidence.level = .686))
+
+f1a <- ggplot(ef, aes(x=PCA_Work, y=fit, ymin=lower,ymax=upper,group=Condition))	+  
+	geom_line(aes(colour=Condition), size=1) + geom_ribbon(fill="grey", alpha=.3) +
+	coord_cartesian(ylim=c(300,550)) +
+	ylab("Model-estimated\nreaction time (in ms)") + xlab("PC: Work Entropy") +
+		scale_colour_brewer(palette = "Set1") + theme_bw(base_size=12) + theme(panel.border = element_blank(), panel.grid.major = element_blank(),
+panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"))
+
+#ggsave("figures/axcpt_rt_work_condition.png", width=8.9, height=6, units = "cm")
+
+ef<-	as.data.frame(Effect(c("PCA_General","Condition"),all.rt.1.1, xlevels=list(PCA_General=c(-2,-1,0,1,2)),
+													confidence.level = .686))
+
+f1b <- ggplot(ef, aes(x=PCA_General, y=fit, ymin=lower,ymax=upper,group=Condition))	+  
+	geom_line(aes(colour=Condition), size=1) + geom_ribbon(fill="grey", alpha=.3) +
+	coord_cartesian(ylim=c(300,550)) +
+	ylab("Model-estimates\nreaction time (in ms)") + xlab("PC: General Entropy") +
+		scale_colour_brewer(palette = "Set1") + theme_bw(base_size = 12) + theme(panel.border = element_blank(), panel.grid.major = element_blank(),
+panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"))
+
+#ggsave("figures/axcpt_rt_general_condition.png", width=8.9, height=6, units = "cm")
+
+(f1 <- ggarrange(f1b,f1a, labels=c("A","B"), legend="bottom", common.legend = T))
+
+ggsave(plot = f1, "figures/traditional_rt_lme4_effects.png", width=17.8, height=8, units = "cm")
+```
+
+
+
+## RT models cross validated
+```{r}
+cv.all.rt.0    <- crossvalidate(mod=mod.rt.0, k=k_loo,    data=axcpt_ppd,
+                                dependent='RT_correct', dv_continuous=T, random=TRUE,
+                                returnRuns = T)
+
+cv.all.rt.1    <- crossvalidate(mod=mod.rt.1, k=k_loo,    data=axcpt_ppd,
+                                dependent='RT_correct', dv_continuous=T, random=TRUE,
+                                returnRuns = T)
+
+cv.all.rt.1.1  <- crossvalidate(mod=mod.rt.1.1, k=k_loo,  data=axcpt_ppd,
+                                dependent='RT_correct', dv_continuous=T, random=TRUE,
+                                returnRuns = T)
+
+cv.all.rt.2    <- crossvalidate(mod=mod.rt.2, k=k_loo,    data=axcpt_ppd,
+                                dependent='RT_correct', dv_continuous=T, random=TRUE,
+                                returnRuns = T)
+
+cv.all.rt.3    <- crossvalidate(mod=mod.rt.3, k=k_loo,    data=axcpt_ppd,
+                                dependent='RT_correct', dv_continuous=T, random=TRUE,
+                                returnRuns = T)
+
+
+
+cv.rt.0.iter = cv.all.rt.0$performances
+cv.rt.0      = cv.all.rt.0$performances_mean
+
+cv.rt.1.iter = cv.all.rt.1$performances
+cv.rt.1      = cv.all.rt.1$performances_mean
+
+cv.rt.1.1.iter = cv.all.rt.1.1$performances
+cv.rt.1.1      = cv.all.rt.1.1$performances_mean
+
+cv.rt.2.iter = cv.all.rt.2$performances
+cv.rt.2      = cv.all.rt.2$performances_mean
+
+cv.rt.3.iter = cv.all.rt.3$performances
+cv.rt.3      = cv.all.rt.3$performances_mean
+```
+
+```{r}
+xval_axcpt_rt_k_loo.iter <- rbind.data.frame(cv.rt.0.iter, cv.rt.1.iter, 
+                                             cv.rt.1.1.iter, cv.rt.2.iter, cv.rt.3.iter)
+write.csv(xval_axcpt_rt_k_loo.iter, "tables/xval_axcpt_rt_k_loo.iter.csv", row.names=F)
+
+xval_axcpt_rt_k_loo.iter <- xval_axcpt_rt_k_loo.iter %>% 
+  group_by(mod) %>% 
+  mutate(meanRMSE_test = mean(RMSE_test)) %>% 
+  ungroup() %>% 
+  mutate(mod = fct_reorder(mod, desc(meanRMSE_test)))
+
+mean.xval_axcpt_rt_k_loo.iter <- xval_axcpt_rt_k_loo.iter %>% 
+  group_by(mod) %>% 
+  summarise(meanRMSE_train = mean(RMSE_train),
+            meanRMSE_test = mean(RMSE_test),
+            meanr2_train = mean(r2_train),
+            meanr2_test = mean(r2_test),
+            sd = sd(RMSE_test),
+            N=n(),
+            sem=sd/sqrt(N)) %>% 
+  ungroup() %>%
+  mutate(mod=fct_reorder(mod, desc(meanRMSE_test)))
+
+write.csv(mean.xval_axcpt_rt_k_loo.iter, "tables/xval_axcpt_rt_k_loo.mean.csv", row.names=F)
+
+
+```
+
+
+
+
+
+
+
+## ACC models
 ```{r}
 all.acc.0    <- glmer(mod.acc.0,   axcpt_ppd,
                    family="binomial", control=glmerControl(optimizer="bobyqa", optCtrl=list(maxfun=3e5)))
@@ -164,11 +591,9 @@ all.acc.3    <- glmer(mod.acc.3,  axcpt_ppd,
 
 
 ```{r}
-anova(all.acc.0, all.acc.1, all.acc.2, all.acc.3)
-```
-
-```{r}
-anova(all.acc.0, all.acc.1.1, all.acc.2, all.acc.3)
+kable(anova(all.acc.0, all.acc.1, all.acc.2, all.acc.3))
+kable(anova(all.acc.0, all.acc.1.1, all.acc.2, all.acc.3))
+kable(anova(all.acc.0, all.acc.0.1))
 ```
 
 
@@ -177,3 +602,146 @@ summ(all.acc.0.1, confint=T, digits=3)
 summ(all.acc.0, confint=T, digits=3)
 anova(all.acc.0)
 ```
+
+```{r}
+ef<-	as.data.frame(Effect(c("L2_exposure","aoa"),all.acc.0.1, xlevels=list(aoa=c(-2,-1,0,1,2)),
+													confidence.level = .686))
+ef$aoa <- factor(ef$aoa)
+f_acc <- ggplot(ef, aes(x=L2_exposure, y=fit, ymin=lower,ymax=upper,group=aoa))	+  
+	geom_line(aes(colour=aoa), size=1) + geom_ribbon(fill="grey", alpha=.3) +
+	coord_cartesian(ylim=c(.5,1)) +
+	ylab("Model-estimated\naccuracy") + xlab("Scaled L2 exposure") +
+		scale_colour_brewer(palette = "Dark2") + theme_bw(base_size=12) + theme(panel.border = element_blank(), panel.grid.major = element_blank(),
+panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"))
+
+ggsave("figures/traditional_acc_plot.png", plot = f_acc, width=12, height=8, units = "cm")
+
+```
+
+## ACC models cross validated
+```{r}
+cv.all.acc.0    <- crossvalidate(mod=mod.acc.0, k=k_loo,    data=axcpt_ppd,
+                                dependent='acc', dv_continuous=F, random=TRUE,
+                                returnRuns = T)
+
+cv.all.acc.0.1    <- crossvalidate(mod=mod.acc.0.1, k=k_loo,    data=axcpt_ppd,
+                                dependent='acc', dv_continuous=F, random=TRUE,
+                                returnRuns = T)
+
+cv.all.acc.1    <- crossvalidate(mod=mod.acc.1, k=k_loo,    data=axcpt_ppd,
+                                dependent='acc', dv_continuous=F, random=TRUE,
+                                returnRuns = T)
+
+cv.all.acc.1.1  <- crossvalidate(mod=mod.acc.1.1, k=k_loo,  data=axcpt_ppd,
+                                dependent='acc', dv_continuous=F, random=TRUE,
+                                returnRuns = T)
+
+cv.all.acc.2    <- crossvalidate(mod=mod.acc.2, k=k_loo,    data=axcpt_ppd,
+                                dependent='acc', dv_continuous=F, random=TRUE,
+                                returnRuns = T)
+
+cv.all.acc.3    <- crossvalidate(mod=mod.acc.3, k=k_loo,    data=axcpt_ppd,
+                                dependent='acc', dv_continuous=F, random=TRUE,
+                                returnRuns = T)
+
+
+
+cv.acc.0.iter = cv.all.acc.0$performances
+cv.acc.0      = cv.all.acc.0$performances_mean
+
+cv.acc.0.1.iter = cv.all.acc.0.1$performances
+cv.acc.0.1      = cv.all.acc.0.1$performances_mean
+
+cv.acc.1.iter = cv.all.acc.1$performances
+cv.acc.1      = cv.all.acc.1$performances_mean
+
+cv.acc.1.1.iter = cv.all.acc.1.1$performances
+cv.acc.1.1      = cv.all.acc.1.1$performances_mean
+
+cv.acc.2.iter = cv.all.acc.2$performances
+cv.acc.2      = cv.all.acc.2$performances_mean
+
+cv.acc.3.iter = cv.all.acc.3$performances
+cv.acc.3      = cv.all.acc.3$performances_mean
+
+xval_axcpt_acc_k_loo.iter <- rbind.data.frame(cv.acc.0.iter, cv.acc.0.1.iter, cv.acc.1.iter, 
+                                             cv.acc.1.1.iter, cv.acc.2.iter, cv.acc.3.iter)
+write.csv(xval_axcpt_acc_k_loo.iter, "tables/xval_axcpt_acc_k_loo.iter.csv", row.names=F)
+
+### FIX BELOW
+
+xval_axcpt_acc_k_loo.iter <- xval_axcpt_acc_k_loo.iter %>% 
+  group_by(mod) %>% 
+  mutate(meanAUC_test = mean(auc_test,na.rm=T),
+         meanError_test = mean(error_test)) %>% 
+  ungroup() %>% 
+  mutate(mod = fct_reorder(mod, desc(meanAUC_test)))
+
+mean.xval_axcpt_acc_k_loo.iter <- xval_axcpt_acc_k_loo.iter %>% 
+  group_by(mod) %>% 
+  summarise(meanError_train = mean(error_train),
+            meanError_test = mean(error_test),
+            meanAUC_train = mean(auc_train),
+            meanAUC_test = mean(auc_test,na.rm=T), 
+            sdError_test = sd(error_test),
+            sdAUC_test = sd(auc_test,na.rm=T),
+            N=n(),
+            semError=sdError_test/sqrt(N),
+            semAUC = sdError_test/sqrt(N)) %>% 
+  ungroup() %>%
+  mutate(mod=fct_reorder(mod, desc(meanAUC_test)))
+
+write.csv(mean.xval_axcpt_acc_k_loo.iter, "tables/xval_axcpt_acc_k_loo.mean.csv", row.names=F)
+
+
+```
+
+
+## Speed accuracy
+```{r}
+axcpt_ppd <- axcpt_ppd %>%  
+  mutate(RTbin = cut(Target.RT, breaks = seq(100,1000,200)))
+
+axcpt_ppd %>% 
+  drop_na(RTbin) %>% 
+  group_by(participant, RTbin, Condition) %>%
+  summarise(meanAcc=mean(accuracy_target, na.rm=T), N=n()) %>% 
+  ungroup() %>% 
+  group_by(RTbin, Condition) %>% 
+  summarise(sem = sd(meanAcc) / sqrt(n()), meanAcc=mean(meanAcc)) %>% 
+  ggplot(aes(x=RTbin, y=meanAcc, colour=Condition, 
+             group=Condition, ymin=meanAcc-1.96*sem, ymax=meanAcc+1.96*sem)) + geom_pointrange() 
+           
+           
+axcpt_ppd %>% 
+  drop_na(RTbin) %>% 
+  group_by(participant, RTbin, Condition, PCA_General, PCA_Work) %>% 
+  summarise(meanAcc=mean(accuracy_target, na.rm=T), N=n()) %>% 
+  ggplot(aes(x=PCA_General, y=meanAcc, colour=Condition, group=Condition)) + geom_point() + facet_wrap(~RTbin) + geom_smooth()
+```
+
+
+## Task version checking and ID
+```{r}
+axcpt_ppd$ExperimentName <- relevel(factor(axcpt_ppd$ExperimentName), ref="AX-CP-ORIG100")
+x <- lmer(RT_correct ~ Condition * ExperimentName + (1+Condition|participant), axcpt_ppd, REML=F)
+anova(x)
+summ(x)
+
+
+p <- axcpt_ppd %>%  
+  group_by(participant,ExperimentName) %>%  
+  summarise(PCA_G = mean(PCA_General), 
+            PCA_W = mean(PCA_Work), 
+            aoa=mean(aoa), 
+            L2_exposure = mean(L2_exposure))
+
+anova(lm(PCA_G ~ ExperimentName,p))
+anova(lm(PCA_W ~ ExperimentName,p))
+summ(lm(PCA_W ~ ExperimentName,p), confint=T)
+anova(lm(aoa ~ ExperimentName,p))
+anova(lm(L2_exposure ~ ExperimentName,p))
+
+
+```
+

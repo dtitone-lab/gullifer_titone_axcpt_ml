@@ -1,5 +1,3 @@
-# Utility funcitons used by other R scripts.
-
 # Preprocessing -----------------------------------------------------------
 findNAs <- function(data){
   nas= as.data.frame(data) %>% summarise_all(funs(sum(is.na(.)))) %>%
@@ -82,7 +80,7 @@ preprocess_steps <- function(training_set, testing_set=NULL){
 }
 
 axcpt_preprocess <- function(axcpt){
-  axcpt <- axcpt[axcpt$Condition!="AX",]
+
   axcpt$RT_correct    <- ifelse(axcpt$accuracy_target == 1 & axcpt$Target.RT > 40,
                                 axcpt$Target.RT, NA)
   
@@ -110,8 +108,10 @@ crossvalidate <- function(data, k, mod, dependent, dv_continuous, random = FALSE
     ncol=5
   }
   
-  data <- data %>% 
-    select(-contains("PCA"))
+  #ata <- data %>% 
+  #  select(-contains("PCA"))
+  
+  data=data
   
   performances <- matrix(ncol = ncol, nrow=k)
   
@@ -131,10 +131,10 @@ crossvalidate <- function(data, k, mod, dependent, dv_continuous, random = FALSE
     
     # preprocess the data for training set, and testing set based on training
     # set
-    preproc_data <- preprocess_steps(training_set, testing_set)
+    #preproc_data <- preprocess_steps(training_set, testing_set)
     
-    training_set <- preproc_data$training_set
-    testing_set <- preproc_data$testing_set
+    #training_set <- preproc_data$training_set
+    #testing_set <- preproc_data$testing_set
     
     
     ## Train model
@@ -188,8 +188,12 @@ crossvalidate <- function(data, k, mod, dependent, dv_continuous, random = FALSE
       roc_train <- roc(response=training_set[[dependent]],
                        predictor=predicted_train)
       
+      if((all(testing_set[[dependent]] == 1) || all(testing_set[[dependent]] == 0))){
+        roc_test = NA
+      } else{
       roc_test <- roc(response=testing_set[[dependent]],
                       predictor=predicted_test)
+      }
       
       # e <- cbind(roc_train$thresholds,roc_train$sensitivities+roc_train$specificities)
       # opt_t <- subset(e,e[,2]==max(e[,2]))[,1]
@@ -197,7 +201,13 @@ crossvalidate <- function(data, k, mod, dependent, dv_continuous, random = FALSE
       # print(paste("thresholding predicted resp at", opt_t))
       
       auc_train <- as.numeric(auc(roc_train))
-      auc_test  <- as.numeric(auc(roc_test))
+      
+      if((all(testing_set[[dependent]] == 1) || all(testing_set[[dependent]] == 0))){
+        auc_test <- NA
+      } else{
+        auc_test  <- as.numeric(auc(roc_test))
+      }
+      
       
       predicted_train <- ifelse(predicted_train >= 0.5,
                                 levels(training_set[[dependent]])[2],
@@ -236,7 +246,6 @@ crossvalidate <- function(data, k, mod, dependent, dv_continuous, random = FALSE
     performances_mean$error_test_sem  <- sd(performances$error_test)  / sqrt(k)
     performances_mean$auc_train_sem <- sd(performances$auc_train) / sqrt(k)
     performances_mean$auc_test_sem  <- sd(performances$auc_test)  / sqrt(k)
-    
   }
   
   df = attr(logLik(model), "df")
@@ -254,23 +263,29 @@ crossvalidate <- function(data, k, mod, dependent, dv_continuous, random = FALSE
   }
 }
 
-print_cval <- function(df){
+print_cval <- function(df, sqrt=F){
+  
+  if(sqrt){
+    df<- df %>%  mutate(cvm = sqrt(cvm), 
+                                cvlo = sqrt(cvlo), 
+                                cvup = sqrt(cvup),
+                                error_metric = "RMSE")
+  }
   
   df.min <- df %>% 
     filter(lambda==lambda.min) %>% 
     mutate(loglambda = log(lambda)) %>% 
     mutate_if(is.numeric, round, 2)
-    
+  
   df.1se <- df %>% 
     filter(lambda==lambda.1se) %>% 
     mutate(loglambda = log(lambda)) %>% 
     mutate_if(is.numeric, round, 2)
   
+  
+  
   with(df.min,
        cat(paste0("min log λ: ", loglambda, " error metric: ", cvm, " [", cvlo, ", ", cvup, "]\n")))
-
-                  
-                  
   with(df.1se,
        cat(paste0("1se log λ: ", loglambda, " error metric: ", cvm, " [", cvlo, ", ", cvup, "]\n")))
 }
