@@ -1,5 +1,5 @@
 ---
-title: "Analysis 1: LME regression"
+title: "LME regression analyses (Analysis 1)"
 author: "Jason W. Gullifer & Debra Titone"
 date: '2019-07-24'
 output:
