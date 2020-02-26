@@ -105,7 +105,7 @@ contrasts(axcpt_ppd$ExperimentName) <- contr.sum(3)
 ```
 
 # Data plots
-## summary stats
+## Summary stats table
 
 ```{r}
 data.agg <- exec_lhq %>% select(participant,age,
@@ -463,46 +463,50 @@ summ(all.acc.0, confint=T, digits=3)
 anova(all.acc.0)
 ```
 
+
 ```{r}
 ef<-	as.data.frame(Effect(c("L2_exposure","aoa"),all.acc.0.1, xlevels=list(aoa=c(-2,-1,0,1,2)),
-													confidence.level = .686))
+                          confidence.level = .686))
 ef$aoa <- factor(ef$aoa)
 f_acc <- ggplot(ef, aes(x=L2_exposure, y=fit, ymin=lower,ymax=upper,group=aoa))	+  
-	geom_line(aes(colour=aoa), size=1) + geom_ribbon(fill="grey", alpha=.3) +
-	coord_cartesian(ylim=c(.5,1)) +
-	ylab("Model-estimated\naccuracy") + xlab("Scaled L2 exposure") +
-		scale_colour_brewer(palette = "Dark2") + theme_bw(base_size=12) + theme(panel.border = element_blank(), panel.grid.major = element_blank(),
-panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"))
+  geom_line(aes(colour=aoa), size=1) + geom_ribbon(fill="grey", alpha=.3) +
+  coord_cartesian(ylim=c(.5,1)) +
+  ylab("Model-estimated\naccuracy") + xlab("Scaled L2 exposure") +
+  scale_colour_brewer(palette = "Dark2") + theme_bw(base_size=12) + theme(panel.border = element_blank(), panel.grid.major = element_blank(),
+                                                                          panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"))
 
 ggsave("figures/traditional_acc_plot.png", plot = f_acc, width=12, height=8, units = "cm")
 
 ```
 
-## ACC models cross validated
-```{r}
+
+<!--## ACC models cross validated-->
+```{r eval=FALSE, include=FALSE}
+# This code is not run in rmarkdown form. Takes hours then hangs at 100%.
+
 cv.all.acc.0    <- crossvalidate(mod=mod.acc.0, k=k_loo,    data=axcpt_ppd,
-                                dependent='acc', dv_continuous=F, random=TRUE,
-                                returnRuns = T)
+                                 dependent='acc', dv_continuous=F, random=TRUE,
+                                 returnRuns = T)
 
 cv.all.acc.0.1    <- crossvalidate(mod=mod.acc.0.1, k=k_loo,    data=axcpt_ppd,
-                                dependent='acc', dv_continuous=F, random=TRUE,
-                                returnRuns = T)
+                                   dependent='acc', dv_continuous=F, random=TRUE,
+                                   returnRuns = T)
 
 cv.all.acc.1    <- crossvalidate(mod=mod.acc.1, k=k_loo,    data=axcpt_ppd,
-                                dependent='acc', dv_continuous=F, random=TRUE,
-                                returnRuns = T)
+                                 dependent='acc', dv_continuous=F, random=TRUE,
+                                 returnRuns = T)
 
 cv.all.acc.1.1  <- crossvalidate(mod=mod.acc.1.1, k=k_loo,  data=axcpt_ppd,
-                                dependent='acc', dv_continuous=F, random=TRUE,
-                                returnRuns = T)
+                                 dependent='acc', dv_continuous=F, random=TRUE,
+                                 returnRuns = T)
 
 cv.all.acc.2    <- crossvalidate(mod=mod.acc.2, k=k_loo,    data=axcpt_ppd,
-                                dependent='acc', dv_continuous=F, random=TRUE,
-                                returnRuns = T)
+                                 dependent='acc', dv_continuous=F, random=TRUE,
+                                 returnRuns = T)
 
 cv.all.acc.3    <- crossvalidate(mod=mod.acc.3, k=k_loo,    data=axcpt_ppd,
-                                dependent='acc', dv_continuous=F, random=TRUE,
-                                returnRuns = T)
+                                 dependent='acc', dv_continuous=F, random=TRUE,
+                                 returnRuns = T)
 
 
 
@@ -525,7 +529,7 @@ cv.acc.3.iter = cv.all.acc.3$performances
 cv.acc.3      = cv.all.acc.3$performances_mean
 
 xval_axcpt_acc_k_loo.iter <- rbind.data.frame(cv.acc.0.iter, cv.acc.0.1.iter, cv.acc.1.iter, 
-                                             cv.acc.1.1.iter, cv.acc.2.iter, cv.acc.3.iter)
+                                              cv.acc.1.1.iter, cv.acc.2.iter, cv.acc.3.iter)
 write.csv(xval_axcpt_acc_k_loo.iter, "tables/xval_axcpt_acc_k_loo.iter.csv", row.names=F)
 
 ### FIX BELOW
