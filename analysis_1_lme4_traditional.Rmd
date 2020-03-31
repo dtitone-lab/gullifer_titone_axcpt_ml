@@ -127,7 +127,7 @@ SocialEntropy,
 meanAccent,
 meanL2ability)
 
-stargazer(data.agg, type="html", out="tables/summary_stats.html")
+stargazer(as.data.frame(data.agg), type="html", out="tables/summary_stats.html")
 ```
 
 ## Group level
