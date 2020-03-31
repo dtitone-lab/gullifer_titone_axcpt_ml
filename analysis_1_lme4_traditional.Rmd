@@ -39,8 +39,10 @@ axcpt <- as.data.table(fread("rawdata/axcpt_trial_data.csv",stringsAsFactors = F
 k=10
 k_loo = length(unique(exec_lhq$participant))
 
+exec_lhq$participant <- as.factor(exec_lhq$participant)
 exec_lhq <- fold(exec_lhq, k = k, id_col = 'participant') %>% ungroup()
 exec_lhq <- fold(exec_lhq, k = k_loo, id_col = 'participant') %>% ungroup()
+exec_lhq$participant <- as.numeric(as.character(exec_lhq$participant))
 
 exec_lhq <- exec_lhq %>% 
   rename(.folds.10 = .folds_1, .folds.loo = .folds_2)
@@ -79,7 +81,10 @@ axcpt_ppd <- axcpt_ppd[!(axcpt_ppd$participant %in% exclude),]
 exec_lhq <- exec_lhq[!(exec_lhq$participant %in% exclude),]
 exec_lhq_ppd <- exec_lhq_ppd[!(exec_lhq_ppd$participant %in% exclude),]
 
+
+exec_lhq_ppd$participant <- as.factor(exec_lhq_ppd$participant)
 exec_lhq_ppd <- fold(exec_lhq_ppd, k = k_loo - length(exclude), id_col = 'participant', handle_existing_fold_cols = "remove") %>% ungroup()
+exec_lhq_ppd$participant <- as.numeric(as.character(exec_lhq_ppd$participant))
 
 k_loo = k_loo - length(exclude)
 
@@ -133,16 +138,21 @@ sd.acc <- sem(axcpt_ppd, accuracy_target, participant, Condition)
 sd.rt$Condition <- factor(sd.rt$Condition, levels=c("AY","BX","BY","AX"))
 sd.acc$Condition <- factor(sd.acc$Condition, levels=c("AY","BX","BY","AX"))
 
-p1 <- ggplot(sd.rt, aes(x=Condition,y=mean_RT_correct,ymin=lower,ymax=upper, fill=Condition)) +
+sd.rt$ConditionOrder <- factor(sd.rt$Condition, levels=c("AX","AY","BX","BY"))
+sd.acc$ConditionOrder <- factor(sd.acc$Condition, levels=c("AX","AY","BX","BY"))
+
+sd.rt %>% arrange(Condition)
+
+p1 <- ggplot(sd.rt, aes(x=ConditionOrder,y=mean_RT_correct,ymin=lower,ymax=upper, fill=Condition)) +
 	geom_col() + geom_errorbar(width=.2) +
 	ylab("Mean RT (in ms)") + xlab("Trial type") + labs(fill="Trial type") + 
-	theme_minimal(base_size = 12) + scale_fill_brewer(palette = "Set1")
+	theme_minimal(base_size = 12) + scale_fill_brewer(palette = "Set1", breaks=c("AX","AY","BX","BY"))
 
 
-p2 <- ggplot(sd.acc, aes(x=Condition,y=mean_accuracy_target,ymin=lower,ymax=upper, fill=Condition)) +
+p2 <- ggplot(sd.acc, aes(x=ConditionOrder,y=mean_accuracy_target,ymin=lower,ymax=upper, fill=Condition)) +
 	geom_col() + geom_errorbar(width=.2) +
 	ylab("Mean accuracy") + xlab("Trial type") + labs(fill="Trial type") +
-	theme_minimal(base_size = 12) + scale_fill_brewer(palette = "Set1")
+	theme_minimal(base_size = 12) + scale_fill_brewer(palette = "Set1", breaks=c("AX","AY","BX","BY"))
 
 (plot <- ggarrange(p1, p2, ncol=2, labels=c("A","B"), common.legend = T, legend = "right", align = "v"))
 ggsave(plot=plot, file="figures/mean_acc_rt.png", width=12, height=6, units="cm")
