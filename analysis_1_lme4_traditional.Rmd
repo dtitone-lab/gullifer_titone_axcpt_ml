@@ -333,9 +333,14 @@ BIC(all.rt.0, all.rt.1, all.rt.1.1, all.rt.2, all.rt.3)
 So entropy explains more then L2 exp and aoa but not vice versa
 
 ```{r}
+# Unstandardized
 summ(all.rt.1.1, confint=T, digits=3)
 summary(all.rt.1.1)
 anova(all.rt.1.1)
+
+# Standardized?
+summ(all.rt.1.1, confint=T, digits=3, scale=T, transform.response = TRUE)
+
 ```
 
 ```{r}
