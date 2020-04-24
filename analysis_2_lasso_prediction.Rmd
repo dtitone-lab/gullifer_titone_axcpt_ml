@@ -39,9 +39,10 @@ axcpt <- as.data.table(fread("rawdata/axcpt_trial_data.csv",stringsAsFactors = F
 k=10
 k_loo = length(unique(exec_lhq$participant))
 
+exec_lhq$participant <- as.factor(exec_lhq$participant)
 exec_lhq <- fold(exec_lhq, k = k, id_col = 'participant') %>% ungroup()
-
 exec_lhq <- fold(exec_lhq, k = k_loo, id_col = 'participant') %>% ungroup()
+exec_lhq$participant <- as.numeric(as.character(exec_lhq$participant))
 
 exec_lhq <- exec_lhq %>% 
   rename(.folds10 = .folds_1, .folds.loo = .folds_2)
@@ -79,7 +80,11 @@ axcpt_ppd <- axcpt_ppd[!(axcpt_ppd$participant %in% exclude),]
 
 exec_lhq_ppd <- exec_lhq_ppd[!(exec_lhq_ppd$participant %in% exclude),]
 
+
+exec_lhq_ppd$participant <- as.factor(exec_lhq_ppd$participant)
 exec_lhq_ppd <- fold(exec_lhq_ppd, k = k_loo - length(exclude), id_col = 'participant', handle_existing_fold_cols = "remove") %>% ungroup()
+exec_lhq_ppd$participant <- as.numeric(as.character(exec_lhq_ppd$participant))
+
 
 k_loo = k_loo - length(exclude)
 
@@ -215,9 +220,15 @@ axcpt.acc_fit
 ```{r}
 mm_rt = model.matrix(RT_correct  ~  aoa * (Condition*L2_exposure + Condition*PCA_Work + Condition*PCA_General),data=axcpt_ppd.rt)
 
+#Unstandardized RT
 axcpt.rt.lasso = cv.glmnet(x=mm_rt,y=axcpt_ppd.rt$RT_correct, type.measure = "mse", 
                         parallel = T,
                         foldid = as.numeric(axcpt_ppd.rt$.folds.loo), standardize=T)
+
+# Standardized RT
+# axcpt.rt.lasso = cv.glmnet(x=mm_rt,y=scale(axcpt_ppd.rt$RT_correct), type.measure = "mse", 
+#                         parallel = T,
+#                         foldid = as.numeric(axcpt_ppd.rt$.folds.loo), standardize=T)
 
 axcpt.rt.lasso.error <- data.frame(lambda=axcpt.rt.lasso$lambda, cvm=axcpt.rt.lasso$cvm,
                                  cvlo=axcpt.rt.lasso$cvlo, cvup=axcpt.rt.lasso$cvup,
