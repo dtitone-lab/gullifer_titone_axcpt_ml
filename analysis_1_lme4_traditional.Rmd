@@ -363,7 +363,7 @@ ef<-	as.data.frame(Effect(c("PCA_General","Condition"),all.rt.1.1, xlevels=list(
 f1b <- ggplot(ef, aes(x=PCA_General, y=fit, ymin=lower,ymax=upper,group=Condition))	+  
 	geom_line(aes(colour=Condition), size=1) + geom_ribbon(fill="grey", alpha=.3) +
 	coord_cartesian(ylim=c(300,550)) +
-	ylab("Model-estimates\nreaction time (in ms)") + xlab("PC: General Entropy") +
+	ylab("Model-estimated\nreaction time (in ms)") + xlab("PC: General Entropy") +
   labs(color="Trial type") +
 		scale_colour_brewer(palette = "Set1") + theme_bw(base_size = 12) + theme(panel.border = element_blank(), panel.grid.major = element_blank(),
 panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"))
